@@ -1,18 +1,36 @@
-<!DOCTYPE html>
+@props(['title' => config('app.name'), 'bodyDataSidebar' => 'dark'])
+
+<!doctype html>
 <html lang="{{ str_replace('_', '-', app()->getLocale()) }}">
-    <head>
-        <meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<head>
+    <meta charset="utf-8" />
+    <title>{{ $title }} | {{ config('app.name') }}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <link rel="icon" type="image/png" href="{{ asset('assets/images/hotelier/hotelierv3.png') }}">
+    <link rel="apple-touch-icon" href="{{ asset('assets/images/hotelier/hotelierv3.png') }}">
 
-        <title>{{ $title ?? config('app.name') }}</title>
+    <x-layouts.shell.head-css />
+    {{ $head ?? '' }}
+    @livewireStyles
+</head>
+<body data-sidebar="{{ $bodyDataSidebar }}">
+    <div id="layout-wrapper">
+        <x-layouts.shell.topbar />
+        <x-layouts.shell.sidebar />
 
-        @vite(['resources/css/app.css', 'resources/js/app.js'])
+        <div class="main-content">
+            <div class="page-content">
+                <div class="container-fluid">
+                    {{ $slot }}
+                </div>
+            </div>
 
-        @livewireStyles
-    </head>
-    <body>
-        {{ $slot }}
+            <x-layouts.shell.footer />
+        </div>
+    </div>
 
-        @livewireScripts
-    </body>
+    {{ $scripts ?? '' }}
+    <x-layouts.shell.vendor-scripts />
+</body>
 </html>
