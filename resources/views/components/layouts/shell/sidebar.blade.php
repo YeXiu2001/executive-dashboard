@@ -5,9 +5,17 @@
                 <li class="menu-title">Menu</li>
 
                 <li>
-                    <a href="{{ route('dashboard') }}" class="waves-effect {{ request()->routeIs('dashboard') ? 'active' : '' }}">
+                    <a href="{{ route('dashboard') }}" class="waves-effect">
                         <i class="bx bx-home-circle"></i>
                         <span>Dashboard</span>
+                    </a>
+                </li>
+
+                <li class="menu-title">Sources</li>
+                <li>
+                    <a href="#" class="waves-effect">
+                        <i class="bx bx-home-circle"></i>
+                        <span>General Fund</span>
                     </a>
                 </li>
             </ul>
