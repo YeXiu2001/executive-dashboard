@@ -8,7 +8,9 @@ use App\Models\RevenueForecastValue;
 use App\Models\RevenueSource;
 use App\Models\User;
 use Database\Seeders\AppLookupSeeder;
+use Database\Seeders\DatabaseSeeder;
 use Database\Seeders\GeneralFundRevenueSourceSeeder;
+use Database\Seeders\RegionIxHistoricalGeneralFundRevenueSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Schema;
 use Livewire\Livewire;
@@ -56,6 +58,71 @@ test('general fund revenue tables and default hierarchy are seeded', function ()
         'source_type' => RevenueSource::TYPE_CATEGORY,
         'accepts_values' => true,
     ]);
+});
+
+test('database seeder populates region ix historical values from 2015 to 2025', function () {
+    $this->seed(DatabaseSeeder::class);
+
+    $fund = Fund::query()->where('code', 'general_fund')->firstOrFail();
+    $eligibleSources = RevenueSource::query()
+        ->where('fund_id', $fund->id)
+        ->where('is_enabled', true)
+        ->where('accepts_values', true)
+        ->get();
+
+    expect($eligibleSources)->toHaveCount(28)
+        ->and(RevenueForecastValue::query()
+            ->where('fund_id', $fund->id)
+            ->where('value_type', RevenueForecastValue::TYPE_HISTORICAL)
+            ->count())->toBe($eligibleSources->count() * 11);
+
+    foreach ($eligibleSources as $source) {
+        $years = RevenueForecastValue::query()
+            ->where('fund_id', $fund->id)
+            ->where('revenue_source_id', $source->id)
+            ->where('value_type', RevenueForecastValue::TYPE_HISTORICAL)
+            ->pluck('year')
+            ->sort()
+            ->values()
+            ->all();
+
+        expect($years)->toBe(range(2015, 2025));
+    }
+
+    $this->assertDatabaseHas('revenue_forecast_values', [
+        'fund_id' => $fund->id,
+        'revenue_source_id' => RevenueSource::query()->where('code', 'share_from_national_tax_allocation_nta')->value('id'),
+        'year' => 2025,
+        'value_type' => RevenueForecastValue::TYPE_HISTORICAL,
+    ]);
+});
+
+test('region ix historical seeder preserves existing values', function () {
+    $fund = Fund::query()->where('code', 'general_fund')->firstOrFail();
+    $source = RevenueSource::query()->where('code', 'business_tax')->firstOrFail();
+
+    RevenueForecastValue::query()->create([
+        'fund_id' => $fund->id,
+        'revenue_source_id' => $source->id,
+        'year' => 2020,
+        'value_type' => RevenueForecastValue::TYPE_HISTORICAL,
+        'amount' => '999999.99',
+    ]);
+
+    $this->seed(RegionIxHistoricalGeneralFundRevenueSeeder::class);
+
+    $existingValue = RevenueForecastValue::query()
+        ->where('fund_id', $fund->id)
+        ->where('revenue_source_id', $source->id)
+        ->where('year', 2020)
+        ->where('value_type', RevenueForecastValue::TYPE_HISTORICAL)
+        ->firstOrFail();
+
+    expect($existingValue->amount)->toBe('999999.99')
+        ->and(RevenueForecastValue::query()
+            ->where('fund_id', $fund->id)
+            ->where('value_type', RevenueForecastValue::TYPE_HISTORICAL)
+            ->count())->toBe(28 * 11);
 });
 
 test('authenticated users can access the general fund module', function () {

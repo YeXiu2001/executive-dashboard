@@ -28,6 +28,7 @@ class DatabaseSeeder extends Seeder
         $this->call([
             AppLookupSeeder::class,
             GeneralFundRevenueSourceSeeder::class,
+            RegionIxHistoricalGeneralFundRevenueSeeder::class,
         ]);
     }
 }
