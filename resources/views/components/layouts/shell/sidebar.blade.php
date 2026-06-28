@@ -23,6 +23,20 @@
                     </ul>
                 </li>
 
+                <li>
+                    <a href="javascript: void(0);" class="has-arrow waves-effect">
+                        <i class="bx bx-data"></i>
+                        <span>Analytics</span>
+                    </a>
+                    <ul class="sub-menu" aria-expanded="false">
+                        <li>
+                            <a href="#">General Fund</a>
+                        </li>
+                    </ul>
+                </li>
+
+                
+
                 <li class="menu-title">Sources</li>
                 <li>
                     <a href="{{ route('general-fund.index') }}" class="waves-effect">
