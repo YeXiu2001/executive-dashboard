@@ -13,7 +13,7 @@
 
                 <li class="menu-title">Sources</li>
                 <li>
-                    <a href="#" class="waves-effect">
+                    <a href="{{ route('general-fund.index') }}" class="waves-effect">
                         <i class="bx bx-home-circle"></i>
                         <span>General Fund</span>
                     </a>
