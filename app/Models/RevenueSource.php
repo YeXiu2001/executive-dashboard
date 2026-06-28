@@ -53,6 +53,11 @@ class RevenueSource extends Model
             ->orderBy('name');
     }
 
+    public function forecastValues(): HasMany
+    {
+        return $this->hasMany(RevenueForecastValue::class);
+    }
+
     public function scopeOrdered($query)
     {
         return $query->orderBy('sort_order')->orderBy('name');

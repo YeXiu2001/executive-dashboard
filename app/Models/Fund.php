@@ -25,4 +25,9 @@ class Fund extends Model
     {
         return $this->hasMany(RevenueSource::class);
     }
+
+    public function revenueForecastValues(): HasMany
+    {
+        return $this->hasMany(RevenueForecastValue::class);
+    }
 }

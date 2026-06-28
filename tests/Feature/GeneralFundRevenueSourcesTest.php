@@ -1,8 +1,10 @@
 <?php
 
+use App\Livewire\Pages\DataEntry\GeneralFundDataEntry;
 use App\Livewire\Pages\GeneralFund\RevenueSourcesCard;
 use App\Models\AppLookup;
 use App\Models\Fund;
+use App\Models\RevenueForecastValue;
 use App\Models\RevenueSource;
 use App\Models\User;
 use Database\Seeders\AppLookupSeeder;
@@ -63,6 +65,17 @@ test('authenticated users can access the general fund module', function () {
         ->get(route('general-fund.index'))
         ->assertOk()
         ->assertSee('General Fund')
+        ->assertSee('Revenue Sources')
+        ->assertSee('Community Tax');
+});
+
+test('authenticated users can access the general fund data entry module', function () {
+    $user = User::factory()->create();
+
+    $this->actingAs($user)
+        ->get(route('data-entry.general-fund'))
+        ->assertOk()
+        ->assertSee('General Fund Data Entry')
         ->assertSee('Revenue Sources')
         ->assertSee('Community Tax');
 });
@@ -136,5 +149,137 @@ test('delete is blocked when a revenue source has children', function () {
     $this->assertDatabaseHas('revenue_sources', [
         'id' => $source->id,
         'code' => 'tax_revenue',
+    ]);
+});
+
+test('data entry source picker shows hierarchy context and blocks non value sources from saving', function () {
+    $mainSource = RevenueSource::query()->where('code', 'local_internal_sources')->firstOrFail();
+    $communityTax = RevenueSource::query()->where('code', 'community_tax')->firstOrFail();
+
+    Livewire::test(GeneralFundDataEntry::class)
+        ->assertSee('Local (Internal) Sources')
+        ->assertSee('Community Tax')
+        ->set('selectedSourceIds', [(string) $mainSource->id])
+        ->set('years', [2024])
+        ->call('save')
+        ->assertHasErrors(['selectedSourceIds.*'])
+        ->set('selectedSourceIds', [(string) $communityTax->id])
+        ->set("amounts.{$communityTax->id}.2024", '100.50')
+        ->call('save')
+        ->assertHasNoErrors();
+
+    $this->assertDatabaseHas('revenue_forecast_values', [
+        'revenue_source_id' => $communityTax->id,
+        'year' => 2024,
+        'value_type' => RevenueForecastValue::TYPE_HISTORICAL,
+        'amount' => '100.50',
+    ]);
+});
+
+test('users can add years and save multiple general fund source values', function () {
+    $communityTax = RevenueSource::query()->where('code', 'community_tax')->firstOrFail();
+    $businessTax = RevenueSource::query()->where('code', 'business_tax')->firstOrFail();
+
+    Livewire::test(GeneralFundDataEntry::class)
+        ->set('selectedSourceIds', [(string) $communityTax->id, (string) $businessTax->id])
+        ->set('newYear', '2024')
+        ->call('addYear')
+        ->set('newYear', '2025')
+        ->call('addYear')
+        ->set("amounts.{$communityTax->id}.2024", '123456.78')
+        ->set("amounts.{$communityTax->id}.2025", '223456.78')
+        ->set("amounts.{$businessTax->id}.2024", '323456.78')
+        ->set("amounts.{$businessTax->id}.2025", '423456.78')
+        ->call('save')
+        ->assertHasNoErrors();
+
+    expect(RevenueForecastValue::query()->count())->toBe(4);
+
+    $this->assertDatabaseHas('revenue_forecast_values', [
+        'revenue_source_id' => $businessTax->id,
+        'year' => 2025,
+        'value_type' => RevenueForecastValue::TYPE_HISTORICAL,
+        'amount' => '423456.78',
+    ]);
+});
+
+test('historical and forecast values are saved separately for the same source and year', function () {
+    $source = RevenueSource::query()->where('code', 'community_tax')->firstOrFail();
+
+    Livewire::test(GeneralFundDataEntry::class)
+        ->set('selectedSourceIds', [(string) $source->id])
+        ->set('years', [2024])
+        ->set('valueType', RevenueForecastValue::TYPE_HISTORICAL)
+        ->set("amounts.{$source->id}.2024", '1000.00')
+        ->call('save')
+        ->assertHasNoErrors()
+        ->set('valueType', RevenueForecastValue::TYPE_FORECAST)
+        ->set("amounts.{$source->id}.2024", '1500.00')
+        ->call('save')
+        ->assertHasNoErrors();
+
+    $this->assertDatabaseHas('revenue_forecast_values', [
+        'revenue_source_id' => $source->id,
+        'year' => 2024,
+        'value_type' => RevenueForecastValue::TYPE_HISTORICAL,
+        'amount' => '1000.00',
+    ]);
+    $this->assertDatabaseHas('revenue_forecast_values', [
+        'revenue_source_id' => $source->id,
+        'year' => 2024,
+        'value_type' => RevenueForecastValue::TYPE_FORECAST,
+        'amount' => '1500.00',
+    ]);
+});
+
+test('data entry validation blocks invalid amounts duplicate years and non selectable sources', function () {
+    $source = RevenueSource::query()->where('code', 'community_tax')->firstOrFail();
+    $nonSelectableSource = RevenueSource::query()->where('code', 'local_internal_sources')->firstOrFail();
+
+    Livewire::test(GeneralFundDataEntry::class)
+        ->set('selectedSourceIds', [(string) $source->id])
+        ->set('years', [2024])
+        ->set("amounts.{$source->id}.2024", '0.99')
+        ->call('save')
+        ->assertHasErrors(["amounts.{$source->id}.2024"])
+        ->set("amounts.{$source->id}.2024", '1000000000000.00')
+        ->call('save')
+        ->assertHasErrors(["amounts.{$source->id}.2024"])
+        ->set("amounts.{$source->id}.2024", '10.123')
+        ->call('save')
+        ->assertHasErrors(["amounts.{$source->id}.2024"])
+        ->set('years', [2024, 2024])
+        ->set("amounts.{$source->id}.2024", '10.12')
+        ->call('save')
+        ->assertHasErrors(['years.*'])
+        ->set('years', [2024])
+        ->set('selectedSourceIds', [(string) $nonSelectableSource->id])
+        ->call('save')
+        ->assertHasErrors(['selectedSourceIds.*']);
+});
+
+test('clearing a saved data entry cell removes the stored value', function () {
+    $fund = Fund::query()->where('code', 'general_fund')->firstOrFail();
+    $source = RevenueSource::query()->where('code', 'community_tax')->firstOrFail();
+
+    RevenueForecastValue::query()->create([
+        'fund_id' => $fund->id,
+        'revenue_source_id' => $source->id,
+        'year' => 2024,
+        'value_type' => RevenueForecastValue::TYPE_HISTORICAL,
+        'amount' => '2500.00',
+    ]);
+
+    Livewire::test(GeneralFundDataEntry::class)
+        ->set('selectedSourceIds', [(string) $source->id])
+        ->set('years', [2024])
+        ->set("amounts.{$source->id}.2024", '')
+        ->call('save')
+        ->assertHasNoErrors();
+
+    $this->assertDatabaseMissing('revenue_forecast_values', [
+        'revenue_source_id' => $source->id,
+        'year' => 2024,
+        'value_type' => RevenueForecastValue::TYPE_HISTORICAL,
     ]);
 });

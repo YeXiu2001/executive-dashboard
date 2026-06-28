@@ -11,3 +11,7 @@ Route::get('/dashboard', function () {
 Route::get('/general-fund', function () {
     return view('pages.general-fund.index');
 })->middleware(['auth', 'verified'])->name('general-fund.index');
+
+Route::get('/data-entry/general-fund', function () {
+    return view('pages.data-entry.general-fund.index');
+})->middleware(['auth', 'verified'])->name('data-entry.general-fund');
