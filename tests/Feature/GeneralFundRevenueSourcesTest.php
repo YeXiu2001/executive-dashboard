@@ -77,7 +77,7 @@ test('authenticated users can access the general fund data entry module', functi
         ->assertOk()
         ->assertSee('General Fund Data Entry')
         ->assertSee('Revenue Sources')
-        ->assertSee('Community Tax');
+        ->assertSee('Tax Revenue');
 });
 
 test('users can create revenue source line items', function () {
@@ -158,12 +158,14 @@ test('data entry source picker shows hierarchy context and blocks non value sour
 
     Livewire::test(GeneralFundDataEntry::class)
         ->assertSee('Local (Internal) Sources')
+        ->assertSee('Tax Revenue')
+        ->call('toggleExpanded', RevenueSource::query()->where('code', 'tax_revenue')->value('id'))
         ->assertSee('Community Tax')
         ->set('selectedSourceIds', [(string) $mainSource->id])
         ->set('years', [2024])
         ->call('save')
-        ->assertHasErrors(['selectedSourceIds.*'])
-        ->set('selectedSourceIds', [(string) $communityTax->id])
+        ->assertHasErrors(['selectedSourceIds'])
+        ->call('toggleSourceSelection', $communityTax->id)
         ->set("amounts.{$communityTax->id}.2024", '100.50')
         ->call('save')
         ->assertHasNoErrors();
@@ -174,6 +176,69 @@ test('data entry source picker shows hierarchy context and blocks non value sour
         'value_type' => RevenueForecastValue::TYPE_HISTORICAL,
         'amount' => '100.50',
     ]);
+});
+
+test('clicking a line item row selects that source', function () {
+    $communityTax = RevenueSource::query()->where('code', 'community_tax')->firstOrFail();
+
+    $component = Livewire::test(GeneralFundDataEntry::class)
+        ->call('toggleSourceSelection', $communityTax->id);
+
+    expect($component->get('selectedSourceIds'))->toBe([(string) $communityTax->id]);
+});
+
+test('selecting a category selects all eligible child sources', function () {
+    $category = RevenueSource::query()->where('code', 'tax_revenue')->firstOrFail();
+    $expectedIds = RevenueSource::query()
+        ->where('parent_id', $category->id)
+        ->where('is_enabled', true)
+        ->where('accepts_values', true)
+        ->pluck('id')
+        ->map(fn ($sourceId) => (string) $sourceId)
+        ->sort()
+        ->values()
+        ->all();
+
+    $component = Livewire::test(GeneralFundDataEntry::class)
+        ->call('toggleSourceSelection', $category->id);
+
+    expect(collect($component->get('selectedSourceIds'))->sort()->values()->all())
+        ->toBe($expectedIds);
+});
+
+test('selecting a parent source selects all eligible descendants but not the non value parent', function () {
+    $parent = RevenueSource::query()->where('code', 'local_internal_sources')->firstOrFail();
+    $categoryIds = RevenueSource::query()
+        ->where('parent_id', $parent->id)
+        ->pluck('id');
+    $expectedIds = RevenueSource::query()
+        ->whereIn('parent_id', $categoryIds)
+        ->where('is_enabled', true)
+        ->where('accepts_values', true)
+        ->pluck('id')
+        ->map(fn ($sourceId) => (string) $sourceId)
+        ->sort()
+        ->values()
+        ->all();
+
+    $component = Livewire::test(GeneralFundDataEntry::class)
+        ->call('toggleSourceSelection', $parent->id);
+
+    $selectedIds = collect($component->get('selectedSourceIds'))->sort()->values()->all();
+
+    expect($selectedIds)
+        ->toBe($expectedIds)
+        ->and($selectedIds)->not->toContain((string) $parent->id);
+});
+
+test('selecting an already fully selected category deselects its eligible children', function () {
+    $category = RevenueSource::query()->where('code', 'tax_revenue')->firstOrFail();
+
+    $component = Livewire::test(GeneralFundDataEntry::class)
+        ->call('toggleSourceSelection', $category->id)
+        ->call('toggleSourceSelection', $category->id);
+
+    expect($component->get('selectedSourceIds'))->toBe([]);
 });
 
 test('users can add years and save multiple general fund source values', function () {
@@ -203,18 +268,13 @@ test('users can add years and save multiple general fund source values', functio
     ]);
 });
 
-test('historical and forecast values are saved separately for the same source and year', function () {
+test('data entry saves historical values only', function () {
     $source = RevenueSource::query()->where('code', 'community_tax')->firstOrFail();
 
     Livewire::test(GeneralFundDataEntry::class)
-        ->set('selectedSourceIds', [(string) $source->id])
+        ->call('toggleSourceSelection', $source->id)
         ->set('years', [2024])
-        ->set('valueType', RevenueForecastValue::TYPE_HISTORICAL)
         ->set("amounts.{$source->id}.2024", '1000.00')
-        ->call('save')
-        ->assertHasNoErrors()
-        ->set('valueType', RevenueForecastValue::TYPE_FORECAST)
-        ->set("amounts.{$source->id}.2024", '1500.00')
         ->call('save')
         ->assertHasNoErrors();
 
@@ -224,11 +284,10 @@ test('historical and forecast values are saved separately for the same source an
         'value_type' => RevenueForecastValue::TYPE_HISTORICAL,
         'amount' => '1000.00',
     ]);
-    $this->assertDatabaseHas('revenue_forecast_values', [
+    $this->assertDatabaseMissing('revenue_forecast_values', [
         'revenue_source_id' => $source->id,
         'year' => 2024,
         'value_type' => RevenueForecastValue::TYPE_FORECAST,
-        'amount' => '1500.00',
     ]);
 });
 
@@ -255,7 +314,7 @@ test('data entry validation blocks invalid amounts duplicate years and non selec
         ->set('years', [2024])
         ->set('selectedSourceIds', [(string) $nonSelectableSource->id])
         ->call('save')
-        ->assertHasErrors(['selectedSourceIds.*']);
+        ->assertHasErrors(['selectedSourceIds']);
 });
 
 test('clearing a saved data entry cell removes the stored value', function () {

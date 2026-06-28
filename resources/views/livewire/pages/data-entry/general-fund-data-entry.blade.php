@@ -18,21 +18,43 @@
                                         $source = $row['source'];
                                         $depth = $row['depth'];
                                         $selectable = $row['selectable'];
+                                        $hasChildren = $row['hasChildren'];
                                         $badgeClass = match ($source->source_type) {
                                             \App\Models\RevenueSource::TYPE_MAIN_SOURCE => 'primary',
                                             \App\Models\RevenueSource::TYPE_CATEGORY => 'info',
                                             default => 'secondary',
                                         };
                                     @endphp
-                                    <tr wire:key="entry-source-{{ $source->id }}" @class(['table-light' => ! $selectable])>
+                                    <tr
+                                        wire:key="entry-source-{{ $source->id }}"
+                                        wire:click="toggleSourceSelection({{ $source->id }})"
+                                        role="button"
+                                        @class([
+                                            'table-primary' => $row['selected'],
+                                            'table-warning' => $row['partiallySelected'] && ! $row['selected'],
+                                            'table-light' => ! $selectable && ! $row['selected'] && ! $row['partiallySelected'],
+                                        ])
+                                    >
                                         <td>
-                                            <div class="d-flex align-items-start" style="padding-left: {{ $depth * 1.2 }}rem;">
+                                            <div class="d-flex align-items-start" style="padding-left: {{ $depth * 1.1 }}rem;">
+                                                @if ($hasChildren)
+                                                    <button
+                                                        type="button"
+                                                        class="btn btn-sm btn-link text-body p-0 me-2 mt-1"
+                                                        wire:click.stop="toggleExpanded({{ $source->id }})"
+                                                        aria-label="{{ $row['expanded'] ? 'Collapse' : 'Expand' }} {{ $source->name }}"
+                                                    >
+                                                        <i class="bx {{ $row['expanded'] ? 'bx-chevron-down' : 'bx-chevron-right' }} font-size-18"></i>
+                                                    </button>
+                                                @else
+                                                    <span class="d-inline-block me-2" style="width: 18px;"></span>
+                                                @endif
                                                 <input
                                                     type="checkbox"
                                                     class="form-check-input mt-1 me-2"
                                                     value="{{ $source->id }}"
-                                                    wire:model.live="selectedSourceIds"
-                                                    @disabled(! $selectable)
+                                                    wire:click.stop="toggleSourceSelection({{ $source->id }})"
+                                                    @checked($row['selected'])
                                                 >
                                                 <div class="min-w-0">
                                                     <div @class(['fw-semibold' => $depth < 2])>{{ $source->name }}</div>
@@ -40,7 +62,9 @@
                                                         <span class="badge rounded-pill bg-{{ $badgeClass }} bg-soft text-{{ $badgeClass }}">
                                                             {{ str($source->source_type)->replace('_', ' ')->title() }}
                                                         </span>
-                                                        @if (! $selectable)
+                                                        @if ($row['partiallySelected'])
+                                                            <span class="badge rounded-pill bg-warning bg-soft text-warning">Partial</span>
+                                                        @elseif (! $selectable)
                                                             <span class="badge rounded-pill bg-light text-muted">Context</span>
                                                         @endif
                                                     </div>
@@ -67,21 +91,7 @@
             <div class="card border-0 shadow-sm">
                 <div class="card-header bg-white py-3">
                     <div class="row g-3 align-items-end">
-                        <div class="col-md-4">
-                            <label for="valueType" class="form-label fw-semibold">Value Type</label>
-                            <select
-                                id="valueType"
-                                class="form-select @error('valueType') is-invalid @enderror"
-                                wire:model.live="valueType"
-                            >
-                                @foreach ($valueTypes as $type => $label)
-                                    <option value="{{ $type }}">{{ $label }}</option>
-                                @endforeach
-                            </select>
-                            @error('valueType') <div class="invalid-feedback">{{ $message }}</div> @enderror
-                        </div>
-
-                        <div class="col-md-5">
+                        <div class="col-md-8">
                             <label for="newYear" class="form-label fw-semibold">Calendar Year</label>
                             <div class="input-group">
                                 <input
@@ -99,7 +109,7 @@
                             </div>
                         </div>
 
-                        <div class="col-md-3 text-md-end">
+                        <div class="col-md-4 text-md-end">
                             <button
                                 type="button"
                                 class="btn btn-primary w-100"

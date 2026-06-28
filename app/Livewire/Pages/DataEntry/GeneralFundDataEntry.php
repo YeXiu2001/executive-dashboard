@@ -15,8 +15,6 @@ class GeneralFundDataEntry extends Component
 {
     public Fund $fund;
 
-    public string $valueType = RevenueForecastValue::TYPE_HISTORICAL;
-
     public string $newYear = '';
 
     /**
@@ -34,6 +32,11 @@ class GeneralFundDataEntry extends Component
      */
     public array $amounts = [];
 
+    /**
+     * @var array<int, int>
+     */
+    public array $expandedSourceIds = [];
+
     public function mount(): void
     {
         $this->fund = Fund::query()->firstOrCreate(
@@ -46,18 +49,12 @@ class GeneralFundDataEntry extends Component
         );
 
         $this->newYear = (string) now()->year;
-    }
-
-    public function updatedSelectedSourceIds(): void
-    {
-        $this->normalizeSelections();
-        $this->loadExistingAmounts();
-    }
-
-    public function updatedValueType(): void
-    {
-        $this->resetValidation();
-        $this->loadExistingAmounts(false);
+        $this->expandedSourceIds = RevenueSource::query()
+            ->where('fund_id', $this->fund->id)
+            ->whereNull('parent_id')
+            ->pluck('id')
+            ->map(fn ($sourceId) => (int) $sourceId)
+            ->all();
     }
 
     public function addYear(): void
@@ -103,6 +100,52 @@ class GeneralFundDataEntry extends Component
         $this->resetValidation();
     }
 
+    public function toggleExpanded(int $sourceId): void
+    {
+        $expandedIds = collect($this->expandedSourceIds)
+            ->map(fn ($expandedId) => (int) $expandedId);
+
+        $this->expandedSourceIds = $expandedIds->contains($sourceId)
+            ? $expandedIds->reject(fn (int $expandedId) => $expandedId === $sourceId)->values()->all()
+            : $expandedIds->push($sourceId)->unique()->values()->all();
+    }
+
+    public function toggleSourceSelection(int $sourceId): void
+    {
+        $source = RevenueSource::query()
+            ->where('fund_id', $this->fund->id)
+            ->find($sourceId);
+
+        if (! $source) {
+            return;
+        }
+
+        $eligibleIds = $this->eligibleSubtreeSourceIds($sourceId);
+
+        if ($eligibleIds === []) {
+            return;
+        }
+
+        $selectedIds = collect($this->selectedSourceIds)
+            ->map(fn ($selectedSourceId) => (int) $selectedSourceId)
+            ->filter(fn (int $selectedSourceId) => $selectedSourceId > 0)
+            ->unique();
+
+        $allSelected = collect($eligibleIds)
+            ->every(fn (int $eligibleId) => $selectedIds->contains($eligibleId));
+
+        $this->selectedSourceIds = ($allSelected
+            ? $selectedIds->reject(fn (int $selectedId) => in_array($selectedId, $eligibleIds, true))
+            : $selectedIds->merge($eligibleIds))
+            ->unique()
+            ->values()
+            ->map(fn (int $selectedId) => (string) $selectedId)
+            ->all();
+
+        $this->normalizeSelections();
+        $this->loadExistingAmounts();
+    }
+
     public function save(): void
     {
         $validated = $this->validatedGrid();
@@ -116,7 +159,7 @@ class GeneralFundDataEntry extends Component
                         'fund_id' => $this->fund->id,
                         'revenue_source_id' => $sourceId,
                         'year' => $year,
-                        'value_type' => $validated['valueType'],
+                        'value_type' => RevenueForecastValue::TYPE_HISTORICAL,
                     ];
 
                     if ($amount === null) {
@@ -151,7 +194,6 @@ class GeneralFundDataEntry extends Component
             ->all();
 
         $data = [
-            'valueType' => $this->valueType,
             'selectedSourceIds' => $selectedSourceIds,
             'years' => $this->years,
             'amounts' => $this->normalizedAmounts($selectedSourceIds, $this->years),
@@ -171,7 +213,6 @@ class GeneralFundDataEntry extends Component
         }
 
         $validator = Validator::make($data, [
-            'valueType' => ['required', Rule::in($this->valueTypes())],
             'selectedSourceIds' => ['required', 'array', 'min:1'],
             'selectedSourceIds.*' => ['integer', Rule::in($this->eligibleSourceIds())],
             'years' => ['required', 'array', 'min:1'],
@@ -183,7 +224,6 @@ class GeneralFundDataEntry extends Component
             '*.regex' => 'Amounts can have up to 2 decimal places.',
         ], [
             'selectedSourceIds' => 'revenue sources',
-            'valueType' => 'value type',
         ]);
 
         $validated = $validator->validate();
@@ -225,9 +265,12 @@ class GeneralFundDataEntry extends Component
 
     private function normalizeSelections(): void
     {
+        $eligibleSourceIds = $this->eligibleSourceIds();
+
         $this->selectedSourceIds = collect($this->selectedSourceIds)
             ->map(fn ($sourceId) => (int) $sourceId)
             ->filter(fn (int $sourceId) => $sourceId > 0)
+            ->filter(fn (int $sourceId) => in_array($sourceId, $eligibleSourceIds, true))
             ->unique()
             ->values()
             ->map(fn (int $sourceId) => (string) $sourceId)
@@ -263,7 +306,7 @@ class GeneralFundDataEntry extends Component
 
         $existing = RevenueForecastValue::query()
             ->where('fund_id', $this->fund->id)
-            ->where('value_type', $this->valueType)
+            ->where('value_type', RevenueForecastValue::TYPE_HISTORICAL)
             ->whereIn('revenue_source_id', $sourceIds)
             ->whereIn('year', $years)
             ->get()
@@ -292,17 +335,6 @@ class GeneralFundDataEntry extends Component
     }
 
     /**
-     * @return array<int, string>
-     */
-    private function valueTypes(): array
-    {
-        return [
-            RevenueForecastValue::TYPE_HISTORICAL,
-            RevenueForecastValue::TYPE_FORECAST,
-        ];
-    }
-
-    /**
      * @return array<int, int>
      */
     private function eligibleSourceIds(): array
@@ -317,7 +349,55 @@ class GeneralFundDataEntry extends Component
     }
 
     /**
-     * @return array<int, array{source: RevenueSource, depth: int, selectable: bool, selected: bool}>
+     * @return array<int, int>
+     */
+    private function eligibleSubtreeSourceIds(int $sourceId): array
+    {
+        $sources = RevenueSource::query()
+            ->where('fund_id', $this->fund->id)
+            ->get(['id', 'parent_id', 'accepts_values', 'is_enabled']);
+
+        return $this->eligibleSubtreeSourceIdsFromCollection($sources, $sourceId);
+    }
+
+    /**
+     * @return array<int, int>
+     */
+    private function eligibleSubtreeSourceIdsFromCollection(Collection $sources, int $sourceId): array
+    {
+        $sourceIds = $this->subtreeSourceIds($sources, $sourceId);
+
+        return $sources
+            ->whereIn('id', $sourceIds)
+            ->filter(fn (RevenueSource $source) => $source->is_enabled && $source->accepts_values)
+            ->pluck('id')
+            ->map(fn ($eligibleId) => (int) $eligibleId)
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @return array<int, int>
+     */
+    private function subtreeSourceIds(Collection $sources, int $sourceId): array
+    {
+        $sourcesByParent = $sources->groupBy('parent_id');
+        $ids = [$sourceId];
+
+        $walk = function (int $parentId) use (&$walk, &$ids, $sourcesByParent) {
+            foreach ($sourcesByParent->get($parentId, collect()) as $childSource) {
+                $ids[] = $childSource->id;
+                $walk($childSource->id);
+            }
+        };
+
+        $walk($sourceId);
+
+        return array_values(array_unique($ids));
+    }
+
+    /**
+     * @return array<int, array{source: RevenueSource, depth: int, selectable: bool, selected: bool, hasChildren: bool, expanded: bool, partiallySelected: bool}>
      */
     private function sourceRows(Collection $sources): array
     {
@@ -325,24 +405,38 @@ class GeneralFundDataEntry extends Component
         $selectedIds = collect($this->selectedSourceIds)
             ->map(fn (string $sourceId) => (int) $sourceId)
             ->all();
+        $expandedIds = collect($this->expandedSourceIds)
+            ->map(fn ($expandedSourceId) => (int) $expandedSourceId)
+            ->all();
         $rows = [];
 
-        $walk = function (?int $parentId, int $depth) use (&$walk, &$rows, $byParent, $selectedIds) {
+        $walk = function (?int $parentId, int $depth, bool $visible) use (&$walk, &$rows, $sources, $byParent, $selectedIds, $expandedIds) {
             foreach ($byParent->get($parentId, collect()) as $source) {
                 $selectable = $source->is_enabled && $source->accepts_values;
+                $hasChildren = $byParent->get($source->id, collect())->isNotEmpty();
+                $expanded = in_array($source->id, $expandedIds, true);
+                $eligibleSubtreeIds = $this->eligibleSubtreeSourceIdsFromCollection($sources, $source->id);
+                $selectedSubtreeIds = array_values(array_intersect($eligibleSubtreeIds, $selectedIds));
 
-                $rows[] = [
-                    'source' => $source,
-                    'depth' => $depth,
-                    'selectable' => $selectable,
-                    'selected' => $selectable && in_array($source->id, $selectedIds, true),
-                ];
+                if ($visible) {
+                    $rows[] = [
+                        'source' => $source,
+                        'depth' => $depth,
+                        'selectable' => $selectable,
+                        'selected' => $eligibleSubtreeIds !== []
+                            && count($selectedSubtreeIds) === count($eligibleSubtreeIds),
+                        'hasChildren' => $hasChildren,
+                        'expanded' => $expanded,
+                        'partiallySelected' => $selectedSubtreeIds !== []
+                            && count($selectedSubtreeIds) < count($eligibleSubtreeIds),
+                    ];
+                }
 
-                $walk($source->id, $depth + 1);
+                $walk($source->id, $depth + 1, $visible && $expanded);
             }
         };
 
-        $walk(null, 0);
+        $walk(null, 0, true);
 
         return $rows;
     }
@@ -365,10 +459,6 @@ class GeneralFundDataEntry extends Component
                     && $source->accepts_values
                     && in_array($source->id, $selectedIds, true))
                 ->values(),
-            'valueTypes' => [
-                RevenueForecastValue::TYPE_HISTORICAL => 'Historical',
-                RevenueForecastValue::TYPE_FORECAST => 'Forecast',
-            ],
         ]);
     }
 }
