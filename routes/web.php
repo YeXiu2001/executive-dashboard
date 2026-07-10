@@ -15,3 +15,11 @@ Route::get('/general-fund', function () {
 Route::get('/data-entry/general-fund', function () {
     return view('pages.data-entry.general-fund.index');
 })->middleware(['auth', 'verified'])->name('data-entry.general-fund');
+
+Route::get('/analytics/general-fund', function () {
+    return view('pages.analytics.general-fund.index');
+})->middleware(['auth', 'verified'])->name('analytics.general-fund');
+
+Route::get('/analytics/gen-fund-comparison', function () {
+    return view('pages.analytics.gen-fund-comparison.index');
+})->middleware(['auth', 'verified'])->name('analytics.gen-fund-comparison');

@@ -30,12 +30,13 @@
                     </a>
                     <ul class="sub-menu" aria-expanded="false">
                         <li>
-                            <a href="#">General Fund</a>
+                            <a href="{{ route('analytics.general-fund') }}">General Fund</a>
+                        </li>
+                        <li>
+                            <a href="{{ route('analytics.gen-fund-comparison') }}">Gen Fund Comparison</a>
                         </li>
                     </ul>
                 </li>
-
-                
 
                 <li class="menu-title">Sources</li>
                 <li>
