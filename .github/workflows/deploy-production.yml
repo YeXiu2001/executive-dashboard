@@ -1,0 +1,118 @@
+name: Deploy Executive Dashboard
+
+on:
+  push:
+    branches:
+      - production
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy production
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7.0.0
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        env:
+          fail-fast: true
+        with:
+          php-version: "8.5"
+          extensions: mbstring, bcmath, curl, openssl, xml, zip, gd, pdo_mysql, intl
+          tools: composer:v2
+          coverage: none
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6.4.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install Composer dependencies
+        run: composer install --no-dev --prefer-dist --optimize-autoloader --no-interaction --no-progress
+
+      - name: Create production .env
+        env:
+          APP_NAME: Executive Dashboard
+          APP_KEY: ${{ secrets.PROD_APP_KEY }}
+          APP_URL: ${{ secrets.PROD_APP_URL }}
+          DB_HOST: ${{ secrets.PROD_DB_HOST }}
+          DB_PORT: ${{ secrets.PROD_DB_PORT }}
+          DB_DATABASE: ${{ secrets.PROD_DB_DATABASE }}
+          DB_USERNAME: ${{ secrets.PROD_DB_USERNAME }}
+          DB_PASSWORD: ${{ secrets.PROD_DB_PASSWORD }}
+        run: |
+          {
+            printf '%s\n' "APP_NAME=\"${APP_NAME}\""
+            printf '%s\n' "APP_ENV=production"
+            printf '%s\n' "APP_KEY=${APP_KEY}"
+            printf '%s\n' "APP_DEBUG=false"
+            printf '%s\n' "APP_URL=${APP_URL}"
+            printf '%s\n' "APP_TIMEZONE=Asia/Manila"
+            printf '%s\n' "APP_LOCALE=en"
+            printf '%s\n' "APP_FALLBACK_LOCALE=en"
+            printf '%s\n' "APP_FAKER_LOCALE=en_US"
+            printf '%s\n' "LOG_CHANNEL=stack"
+            printf '%s\n' "LOG_STACK=single"
+            printf '%s\n' "LOG_LEVEL=error"
+            printf '%s\n' "DB_CONNECTION=mysql"
+            printf '%s\n' "DB_HOST=${DB_HOST}"
+            printf '%s\n' "DB_PORT=${DB_PORT:-3306}"
+            printf '%s\n' "DB_DATABASE=${DB_DATABASE}"
+            printf '%s\n' "DB_USERNAME=${DB_USERNAME}"
+            printf '%s\n' "DB_PASSWORD=${DB_PASSWORD}"
+            printf '%s\n' "SESSION_DRIVER=database"
+            printf '%s\n' "SESSION_LIFETIME=120"
+            printf '%s\n' "SESSION_ENCRYPT=false"
+            printf '%s\n' "SESSION_PATH=/"
+            printf '%s\n' "SESSION_DOMAIN=null"
+            printf '%s\n' "BROADCAST_CONNECTION=log"
+            printf '%s\n' "FILESYSTEM_DISK=local"
+            printf '%s\n' "QUEUE_CONNECTION=sync"
+            printf '%s\n' "CACHE_STORE=file"
+            printf '%s\n' "MAIL_MAILER=log"
+            printf '%s\n' "MAIL_FROM_ADDRESS=hello@example.com"
+            printf '%s\n' "MAIL_FROM_NAME=\"${APP_NAME}\""
+            printf '%s\n' "VITE_APP_NAME=\"${APP_NAME}\""
+          } > .env
+
+      - name: Build frontend assets
+        run: |
+          npm ci
+          npm run build
+
+      - name: Sync files to server
+        uses: easingthemes/ssh-deploy@v6.0.3
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          ARGS: "-rlgoDzvc -i --delete"
+          SOURCE: "./"
+          REMOTE_HOST: ${{ secrets.REMOTE_HOST }}
+          REMOTE_USER: ${{ secrets.PROD_REMOTE_USER }}
+          TARGET: ${{ secrets.PROD_REMOTE_PATH }}
+          EXCLUDE: "/node_modules/, /tests/, /storage/, /.git/, /.github/"
+
+      - name: Refresh Laravel on server
+        uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.REMOTE_HOST }}
+          username: ${{ secrets.PROD_REMOTE_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -e
+            cd "${{ secrets.PROD_REMOTE_PATH }}"
+            mkdir -p storage/framework/{sessions,views,cache/data} bootstrap/cache
+            php8.5 artisan migrate --force
+            php8.5 artisan storage:link --force
+            php8.5 artisan config:cache
+            php8.5 artisan route:cache
+            php8.5 artisan view:cache
